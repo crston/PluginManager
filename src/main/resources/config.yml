@@ -1,0 +1,12 @@
+reload-blacklist:
+  - CMI
+  - LuckPerms
+  - ProtocolLib
+  - Citizens
+  - ItemsAdder
+  - Oraxen
+  - ModelEngine
+  - Slimefun
+  - MythicMobs
+  - MMOItems
+  - Chunky
