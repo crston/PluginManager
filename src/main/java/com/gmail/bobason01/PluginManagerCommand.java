@@ -14,7 +14,7 @@ public final class PluginManagerCommand implements TabExecutor {
     private final PluginManager core;
     private final String prefix = ChatColor.GRAY + "[" + ChatColor.AQUA + "PluginManager" + ChatColor.GRAY + "] " + ChatColor.RESET;
 
-    // 파일/식별자 캐시
+    // 파일 / 식별자 캐시
     private volatile List<String> cachedJarBaseNames = Collections.emptyList();             // 확장자 없는 jar 파일명(lower)
     private volatile Map<String, String> cachedJarIdByBase = Collections.emptyMap();        // baseName -> plugin.yml name
     private volatile long lastScan = 0L;
@@ -57,7 +57,7 @@ public final class PluginManagerCommand implements TabExecutor {
 
         final String nameArg = join(args, 1);
 
-        // load는 플러그인 인스턴스가 없어야 함
+        // load 는 플러그인 인스턴스가 없어야 함
         if (sub.equals("load")) {
             refreshJarCacheIfNeeded();
 
@@ -85,6 +85,7 @@ public final class PluginManagerCommand implements TabExecutor {
                 Plugin loaded = Bukkit.getPluginManager().loadPlugin(jar);
                 if (loaded != null) {
                     Bukkit.getPluginManager().enablePlugin(loaded);
+                    trySyncCommands();
                     sender.sendMessage(prefix + ChatColor.GREEN + "loaded " + loaded.getName());
                 } else {
                     sender.sendMessage(prefix + ChatColor.RED + "load failed: " + nameArg);
@@ -138,6 +139,7 @@ public final class PluginManagerCommand implements TabExecutor {
                                 Plugin reloaded = Bukkit.getPluginManager().loadPlugin(jar);
                                 if (reloaded != null) {
                                     Bukkit.getPluginManager().enablePlugin(reloaded);
+                                    trySyncCommands();
                                     ok = reloaded.isEnabled();
                                 } else {
                                     ok = false;
@@ -193,7 +195,7 @@ public final class PluginManagerCommand implements TabExecutor {
                 return filterPluginsByEnabled(q, true);
             }
             if (a.equals("load")) {
-                // 아직 로드되지 않은 식별자의 jar만
+                // 아직 로드되지 않은 식별자의 jar 만
                 return filterUnloadableJars(q);
             }
         }
@@ -294,5 +296,18 @@ public final class PluginManagerCommand implements TabExecutor {
         StringBuilder b = new StringBuilder();
         for (int k = i; k < a.length; k++) { if (k > i) b.append(' '); b.append(a[k]); }
         return b.toString();
+    }
+
+    private void trySyncCommands() {
+        try {
+            // Paper / Purpur 계열은 이 메서드 제공
+            java.lang.reflect.Method m = Bukkit.getServer().getClass().getMethod("syncCommands");
+            m.invoke(Bukkit.getServer());
+            Bukkit.getLogger().info("[PluginManager] Commands synced.");
+        } catch (NoSuchMethodException e) {
+            // Spigot 계열이면 없음 > 무시
+        } catch (Throwable t) {
+            Bukkit.getLogger().warning("[PluginManager] syncCommands failed: " + t.getMessage());
+        }
     }
 }
