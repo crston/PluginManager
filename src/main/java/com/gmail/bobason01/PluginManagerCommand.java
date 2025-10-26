@@ -1,209 +1,298 @@
 package com.gmail.bobason01;
 
-import net.md_5.bungee.api.chat.ClickEvent;
-import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.*;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.PluginDescriptionFile;
 
+import java.io.File;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class PluginManagerCommand implements TabExecutor {
+public final class PluginManagerCommand implements TabExecutor {
+    private final PluginManager core;
     private final String prefix = ChatColor.GRAY + "[" + ChatColor.AQUA + "PluginManager" + ChatColor.GRAY + "] " + ChatColor.RESET;
+
+    // 파일/식별자 캐시
+    private volatile List<String> cachedJarBaseNames = Collections.emptyList();             // 확장자 없는 jar 파일명(lower)
+    private volatile Map<String, String> cachedJarIdByBase = Collections.emptyMap();        // baseName -> plugin.yml name
+    private volatile long lastScan = 0L;
+    private static final long CACHE_DURATION_MS = 5000L;
+
+    public PluginManagerCommand(PluginManager core) {
+        this.core = core;
+    }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!sender.hasPermission("pluginmanager.use")) {
-            sender.sendMessage(prefix + ChatColor.RED + "You do not have permission");
+            sender.sendMessage(prefix + ChatColor.RED + "no permission");
             return true;
         }
         if (args.length == 0) {
-            sendHelp(sender, label);
+            help(sender, label);
             return true;
         }
 
-        String sub = args[0].toLowerCase(Locale.ROOT);
+        final String sub = args[0].toLowerCase(Locale.ROOT);
 
         if (sub.equals("list")) {
-            handleList(sender, args);
-            return true;
-        }
-
-        if (sub.equals("confirm")) {
-            if (args.length < 3) {
-                sender.sendMessage(prefix + ChatColor.RED + "Usage: /" + label + " confirm <disable|reload> <plugin>");
-                return true;
-            }
-            String action = args[1].toLowerCase(Locale.ROOT);
-            String name = joinRest(args, 2);
-            Plugin target = PluginManager.getInstance().findPlugin(name);
-            if (target == null) {
-                sender.sendMessage(prefix + ChatColor.RED + "Plugin not found: " + name);
-                return true;
-            }
-            PluginManager.PendingAction pa = PluginManager.getInstance().getPending(target.getName());
-            if (pa == null || !pa.action.equals(action)) {
-                sender.sendMessage(prefix + ChatColor.RED + "No pending confirm for " + target.getName());
-                return true;
-            }
-            PluginManager.getInstance().clearPending(target.getName());
-
-            PluginManager.ActionResult r;
-            if (action.equals("disable")) {
-                r = PluginManager.getInstance().doDisable(target);
-            } else if (action.equals("reload")) {
-                r = PluginManager.getInstance().doReload(target);
-            } else {
-                sender.sendMessage(prefix + ChatColor.RED + "Unknown confirm action");
-                return true;
-            }
-            sender.sendMessage(prefix + (r.success ? ChatColor.GREEN : ChatColor.RED) + r.message + ChatColor.GRAY + " (" + target.getName() + ")");
+            final String mode = args.length >= 2 ? args[1].toLowerCase(Locale.ROOT) : "all";
+            List<Plugin> list = Arrays.asList(Bukkit.getPluginManager().getPlugins());
+            if (mode.equals("enabled")) list = list.stream().filter(Plugin::isEnabled).collect(Collectors.toList());
+            if (mode.equals("disabled")) list = list.stream().filter(p -> !p.isEnabled()).collect(Collectors.toList());
+            list.sort(Comparator.comparing(Plugin::getName, String.CASE_INSENSITIVE_ORDER));
+            String s = list.stream()
+                    .map(p -> (p.isEnabled() ? ChatColor.GREEN : ChatColor.RED) + p.getName() + ChatColor.RESET)
+                    .collect(Collectors.joining(ChatColor.GRAY + ", " + ChatColor.RESET));
+            sender.sendMessage(prefix + "Plugins: " + s);
             return true;
         }
 
         if (args.length < 2) {
-            sendHelp(sender, label);
+            help(sender, label);
             return true;
         }
 
-        String name = joinRest(args, 1);
-        Plugin target = PluginManager.getInstance().findPlugin(name);
+        final String nameArg = join(args, 1);
+
+        // load는 플러그인 인스턴스가 없어야 함
+        if (sub.equals("load")) {
+            refreshJarCacheIfNeeded();
+
+            File jar = new File(core.pluginsDir(), nameArg.endsWith(".jar") ? nameArg : nameArg + ".jar");
+            if (!jar.exists()) {
+                sender.sendMessage(prefix + ChatColor.RED + "jar not found: " + jar.getName());
+                return true;
+            }
+
+            // 식별자 사전 점검 (이미 로드된 동일 식별자면 실패)
+            String base = baseName(jar.getName()).toLowerCase(Locale.ROOT);
+            String idName = cachedJarIdByBase.get(base);
+            if (idName == null) {
+                idName = readPluginIdFromJar(jar); // 캐시 미스 시 한 번 더 시도
+            }
+            if (idName != null) {
+                Plugin already = Bukkit.getPluginManager().getPlugin(idName);
+                if (already != null) {
+                    sender.sendMessage(prefix + ChatColor.RED + "already loaded identifier: " + idName);
+                    return true;
+                }
+            }
+
+            try {
+                Plugin loaded = Bukkit.getPluginManager().loadPlugin(jar);
+                if (loaded != null) {
+                    Bukkit.getPluginManager().enablePlugin(loaded);
+                    sender.sendMessage(prefix + ChatColor.GREEN + "loaded " + loaded.getName());
+                } else {
+                    sender.sendMessage(prefix + ChatColor.RED + "load failed: " + nameArg);
+                }
+            } catch (Throwable t) {
+                sender.sendMessage(prefix + ChatColor.RED + "exception: " + t.getMessage());
+                t.printStackTrace();
+            }
+            return true;
+        }
+
+        // load 이외의 서브커맨드: 대상 플러그인 탐색
+        Plugin target = core.findPlugin(nameArg);
         if (target == null) {
-            sender.sendMessage(prefix + ChatColor.RED + "Plugin not found: " + name);
+            sender.sendMessage(prefix + ChatColor.RED + "not found: " + nameArg);
             return true;
         }
 
-        if (sub.equals("enable")) {
-            runMainThread(() -> {
-                PluginManager.ActionResult r = PluginManager.getInstance().enablePluginSafe(target);
-                sender.sendMessage(prefix + (r.success ? ChatColor.GREEN : ChatColor.RED) + r.message + ChatColor.GRAY + " (" + target.getName() + ")");
-            });
-            return true;
-        } else if (sub.equals("disable")) {
-            runMainThread(() -> {
-                PluginManager.CommandFeedback fb = new PluginManager.CommandFeedback();
-                PluginManager.ActionResult r = PluginManager.getInstance().disablePluginSafe(target, fb);
-                if (!r.success && fb.reason != null && !fb.reason.isEmpty()) {
-                    TextComponent msg = new TextComponent(prefix + ChatColor.RED + r.message + " ");
-                    TextComponent click = new TextComponent(ChatColor.YELLOW + "[Click here to confirm]");
-                    click.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND,
-                            "/pluginmanager confirm disable " + target.getName()));
-                    msg.addExtra(click);
-                    sender.spigot().sendMessage(msg);
-                } else {
-                    sender.sendMessage(prefix + (r.success ? ChatColor.GREEN : ChatColor.RED) + r.message +
-                            (fb.reason.isEmpty() ? "" : " [" + fb.reason + "]") + ChatColor.GRAY + " (" + target.getName() + ")");
+        final String pluginName = target.getDescription().getName();
+
+        Bukkit.getScheduler().runTask(core, () -> {
+            boolean ok = false;
+            String msg = "";
+
+            try {
+                switch (sub) {
+                    case "enable": {
+                        Bukkit.getPluginManager().enablePlugin(target);
+                        ok = target.isEnabled();
+                        msg = ok ? "enabled" : "enable-failed";
+                        break;
+                    }
+                    case "disable": {
+                        Bukkit.getPluginManager().disablePlugin(target);
+                        ok = !target.isEnabled();
+                        msg = ok ? "disabled" : "disable-failed";
+                        break;
+                    }
+                    case "unload": {
+                        ok = PluginUnloader.unload(target);
+                        msg = ok ? "unloaded" : "unload-failed";
+                        break;
+                    }
+                    case "reload": {
+                        // disable → unload → load → enable
+                        Bukkit.getPluginManager().disablePlugin(target);
+                        boolean uok = PluginUnloader.unload(target);
+                        if (uok) {
+                            File jar = new File(core.pluginsDir(), target.getName() + ".jar");
+                            try {
+                                Plugin reloaded = Bukkit.getPluginManager().loadPlugin(jar);
+                                if (reloaded != null) {
+                                    Bukkit.getPluginManager().enablePlugin(reloaded);
+                                    ok = reloaded.isEnabled();
+                                } else {
+                                    ok = false;
+                                }
+                            } catch (Throwable ignored) {
+                                ok = false;
+                            }
+                        } else {
+                            ok = false;
+                        }
+                        msg = ok ? "reloaded" : "reload-failed";
+                        break;
+                    }
+                    default:
+                        help(sender, label);
+                        return;
                 }
-            });
-            return true;
-        } else if (sub.equals("reload")) {
-            runMainThread(() -> {
-                PluginManager.CommandFeedback fb = new PluginManager.CommandFeedback();
-                PluginManager.ActionResult r = PluginManager.getInstance().reloadPluginSafe(target, fb);
-                if (!r.success && fb.reason != null && !fb.reason.isEmpty()) {
-                    TextComponent msg = new TextComponent(prefix + ChatColor.RED + r.message + " ");
-                    TextComponent click = new TextComponent(ChatColor.YELLOW + "[Click here to confirm]");
-                    click.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND,
-                            "/pluginmanager confirm reload " + target.getName()));
-                    msg.addExtra(click);
-                    sender.spigot().sendMessage(msg);
-                } else {
-                    sender.sendMessage(prefix + (r.success ? ChatColor.GREEN : ChatColor.RED) + r.message +
-                            (fb.reason.isEmpty() ? "" : " [" + fb.reason + "]") + ChatColor.GRAY + " (" + target.getName() + ")");
+            } finally {
+                // 탭 자동완성 품질을 위해 캐시 갱신
+                if (sub.equals("unload") || sub.equals("reload") || sub.equals("load") || sub.equals("enable") || sub.equals("disable")) {
+                    invalidateJarCache();
                 }
-            });
-            return true;
-        } else {
-            sendHelp(sender, label);
-            return true;
-        }
-    }
+            }
 
-    private void handleList(CommandSender sender, String[] args) {
-        String mode = args.length >= 2 ? args[1].toLowerCase(Locale.ROOT) : "all";
-        List<Plugin> plugins = Arrays.asList(Bukkit.getPluginManager().getPlugins());
-        if (mode.equals("enabled")) {
-            plugins = plugins.stream().filter(Plugin::isEnabled).collect(Collectors.toList());
-        } else if (mode.equals("disabled")) {
-            plugins = plugins.stream().filter(p -> !p.isEnabled()).collect(Collectors.toList());
-        }
-        plugins.sort(Comparator.comparing(Plugin::getName, String.CASE_INSENSITIVE_ORDER));
-        String joined = plugins.stream()
-                .map(p -> (p.isEnabled() ? ChatColor.GREEN : ChatColor.RED) + p.getName() + ChatColor.RESET)
-                .collect(Collectors.joining(ChatColor.GRAY + ", " + ChatColor.RESET));
-        sender.sendMessage(prefix + "Plugins: " + joined);
-    }
+            sender.sendMessage(prefix + (ok ? ChatColor.GREEN : ChatColor.RED) + msg + ChatColor.GRAY + " (" + pluginName + ")");
+        });
 
-    private void runMainThread(Runnable r) {
-        if (Bukkit.isPrimaryThread()) r.run();
-        else Bukkit.getScheduler().runTask(PluginManager.getInstance(), r);
-    }
-
-    private String joinRest(String[] arr, int start) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = start; i < arr.length; i++) {
-            if (i > start) sb.append(' ');
-            sb.append(arr[i]);
-        }
-        return sb.toString();
-    }
-
-    private void sendHelp(CommandSender sender, String label) {
-        sender.sendMessage(prefix + ChatColor.AQUA + "/" + label + " enable <plugin>");
-        sender.sendMessage(prefix + ChatColor.AQUA + "/" + label + " disable <plugin>");
-        sender.sendMessage(prefix + ChatColor.AQUA + "/" + label + " reload <plugin>");
-        sender.sendMessage(prefix + ChatColor.AQUA + "/" + label + " confirm <disable|reload> <plugin>");
-        sender.sendMessage(prefix + ChatColor.AQUA + "/" + label + " list [all|enabled|disabled]");
+        return true;
     }
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            return Arrays.asList("enable", "disable", "reload", "confirm", "list").stream()
+            return Arrays.asList("enable", "disable", "unload", "reload", "list", "load").stream()
                     .filter(s -> s.startsWith(args[0].toLowerCase(Locale.ROOT)))
                     .collect(Collectors.toList());
         }
         if (args.length == 2) {
-            String action = args[0].toLowerCase(Locale.ROOT);
+            String a = args[0].toLowerCase(Locale.ROOT);
             String q = args[1].toLowerCase(Locale.ROOT);
 
-            if (action.equals("list")) {
+            if (a.equals("list")) {
                 return Arrays.asList("all", "enabled", "disabled").stream()
                         .filter(s -> s.startsWith(q))
                         .collect(Collectors.toList());
             }
-            if (action.equals("enable")) {
-                return Arrays.stream(Bukkit.getPluginManager().getPlugins())
-                        .filter(p -> !p.isEnabled())
-                        .map(Plugin::getName)
-                        .filter(n -> n.toLowerCase(Locale.ROOT).contains(q))
-                        .sorted(String.CASE_INSENSITIVE_ORDER)
-                        .collect(Collectors.toList());
+            if (a.equals("enable")) {
+                // 꺼져 있는 플러그인만
+                return filterPluginsByEnabled(q, false);
             }
-            if (action.equals("disable") || action.equals("reload")) {
-                return Arrays.stream(Bukkit.getPluginManager().getPlugins())
-                        .filter(Plugin::isEnabled)
-                        .map(Plugin::getName)
-                        .filter(n -> n.toLowerCase(Locale.ROOT).contains(q))
-                        .sorted(String.CASE_INSENSITIVE_ORDER)
-                        .collect(Collectors.toList());
+            if (a.equals("disable") || a.equals("unload") || a.equals("reload")) {
+                // 켜져 있는 플러그인만
+                return filterPluginsByEnabled(q, true);
             }
-            if (action.equals("confirm")) {
-                return Arrays.asList("disable", "reload").stream()
-                        .filter(s -> s.startsWith(q))
-                        .collect(Collectors.toList());
+            if (a.equals("load")) {
+                // 아직 로드되지 않은 식별자의 jar만
+                return filterUnloadableJars(q);
             }
-        }
-        if (args.length == 3 && args[0].equalsIgnoreCase("confirm")) {
-            String q = args[2].toLowerCase(Locale.ROOT);
-            return Arrays.stream(Bukkit.getPluginManager().getPlugins())
-                    .map(Plugin::getName)
-                    .filter(n -> n.toLowerCase(Locale.ROOT).contains(q))
-                    .sorted(String.CASE_INSENSITIVE_ORDER)
-                    .collect(Collectors.toList());
         }
         return Collections.emptyList();
+    }
+
+    /* ===================== 내부 유틸 ===================== */
+
+    private List<String> filterPluginsByEnabled(String q, boolean enabled) {
+        return Arrays.stream(Bukkit.getPluginManager().getPlugins())
+                .filter(p -> p.isEnabled() == enabled)
+                .map(Plugin::getName)
+                .map(String::toLowerCase)
+                .filter(n -> n.contains(q))
+                .sorted()
+                .limit(50)
+                .collect(Collectors.toList());
+    }
+
+    private List<String> filterUnloadableJars(String q) {
+        refreshJarCacheIfNeeded();
+
+        // 현재 로드된 식별자 집합
+        Set<String> loadedIds = Arrays.stream(Bukkit.getPluginManager().getPlugins())
+                .map(p -> p.getDescription().getName().toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+
+        // jar 베이스명 후보 중, 식별자가 미로드 상태인 것만 노출
+        return cachedJarBaseNames.stream()
+                .filter(base -> {
+                    String id = cachedJarIdByBase.get(base);
+                    return id == null || !loadedIds.contains(id.toLowerCase(Locale.ROOT));
+                })
+                .filter(base -> base.contains(q))
+                .sorted()
+                .limit(50)
+                .collect(Collectors.toList());
+    }
+
+    private void refreshJarCacheIfNeeded() {
+        long now = System.currentTimeMillis();
+        if (now - lastScan < CACHE_DURATION_MS) return;
+
+        File dir = core.pluginsDir();
+        File[] jars = dir.listFiles((d, name) -> name.toLowerCase(Locale.ROOT).endsWith(".jar"));
+        if (jars == null) {
+            cachedJarBaseNames = Collections.emptyList();
+            cachedJarIdByBase = Collections.emptyMap();
+            lastScan = now;
+            return;
+        }
+
+        List<String> baseNames = new ArrayList<>(jars.length);
+        Map<String, String> idByBase = new HashMap<>(jars.length * 2);
+
+        for (File f : jars) {
+            String base = baseName(f.getName()).toLowerCase(Locale.ROOT);
+            baseNames.add(base);
+
+            String id = readPluginIdFromJar(f);
+            if (id != null) idByBase.put(base, id);
+        }
+
+        cachedJarBaseNames = baseNames;
+        cachedJarIdByBase = idByBase;
+        lastScan = now;
+    }
+
+    private void invalidateJarCache() {
+        lastScan = 0L; // 다음 요청에서 다시 스캔
+    }
+
+    private String readPluginIdFromJar(File jar) {
+        try {
+            PluginDescriptionFile desc = core.getPluginLoader().getPluginDescription(jar);
+            return desc == null ? null : desc.getName();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String baseName(String fileName) {
+        String n = fileName;
+        int i = n.lastIndexOf('.');
+        return (i > 0) ? n.substring(0, i) : n;
+    }
+
+    private void help(CommandSender s, String l) {
+        s.sendMessage(prefix + ChatColor.AQUA + "/" + l + " list [all|enabled|disabled]");
+        s.sendMessage(prefix + ChatColor.AQUA + "/" + l + " enable <plugin>");
+        s.sendMessage(prefix + ChatColor.AQUA + "/" + l + " disable <plugin>");
+        s.sendMessage(prefix + ChatColor.AQUA + "/" + l + " unload <plugin>");
+        s.sendMessage(prefix + ChatColor.AQUA + "/" + l + " reload <plugin>");
+        s.sendMessage(prefix + ChatColor.AQUA + "/" + l + " load <jarname>");
+    }
+
+    private static String join(String[] a, int i) {
+        StringBuilder b = new StringBuilder();
+        for (int k = i; k < a.length; k++) { if (k > i) b.append(' '); b.append(a[k]); }
+        return b.toString();
     }
 }

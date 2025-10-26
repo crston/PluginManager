@@ -1,12 +1,15 @@
-reload-blacklist:
-  - CMI
-  - LuckPerms
-  - ProtocolLib
-  - Citizens
-  - ItemsAdder
-  - Oraxen
-  - ModelEngine
-  - Slimefun
-  - MythicMobs
-  - MMOItems
-  - Chunky
+tps:
+  min: 18.5
+defer:
+  players: 200
+confirm:
+  window-ms: 15000
+load:
+  enable: true
+unload:
+  mode: forced
+wg:
+  apply:
+    per-tick: 200
+wg.flag-mappings: {}
+reload-blacklist: []
