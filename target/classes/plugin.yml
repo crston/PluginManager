@@ -1,6 +1,6 @@
 name: PluginManager
 main: com.gmail.bobason01.PluginManager
-version: 5.0
+version: 100.0
 author: crston
 commands:
   pluginmanager:

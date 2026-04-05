@@ -6,7 +6,7 @@
 
     <groupId>com.gmail.bobason01</groupId>
     <artifactId>PluginManager</artifactId>
-    <version>5.0</version>
+    <version>100.0</version>
     <packaging>jar</packaging>
 
     <name>PluginManager</name>

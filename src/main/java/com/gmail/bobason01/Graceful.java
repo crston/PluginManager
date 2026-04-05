@@ -29,10 +29,8 @@ public final class Graceful {
         }
     }
 
-    // 시그니처를 Object 기반으로
     public static Result unload(Plugin plugin, Object threadRegistry, Object resourceRegistry, int timeoutMs) {
         try {
-            // 여기서 threadRegistry / resourceRegistry 실제 클래스 확인 후 리플렉션 사용 가능
             plugin.getServer().getPluginManager().disablePlugin(plugin);
             return Result.ok("unloaded");
         } catch (Throwable t) {

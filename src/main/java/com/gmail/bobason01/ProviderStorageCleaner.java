@@ -9,9 +9,7 @@ public final class ProviderStorageCleaner {
     private ProviderStorageCleaner() {}
 
     public static void clean(String pluginName, String pluginVersion) {
-        // identifier 형태: "플러그인 v 버전"
         String identifierFull = pluginName + " v" + pluginVersion;
-        // 두 가지 케이스 모두 청소
         cleanInternal(identifierFull);
         cleanInternal(pluginName);
     }
@@ -35,7 +33,6 @@ public final class ProviderStorageCleaner {
                     removed += pruneCollection((Collection<?>) o, identifier);
                 }
 
-                // io.papermc.* 내부 객체까지 재귀 탐색
                 for (Field f : getAllFields(o.getClass())) {
                     if ((f.getModifiers() & java.lang.reflect.Modifier.STATIC) != 0) continue;
                     try {
@@ -93,7 +90,6 @@ public final class ProviderStorageCleaner {
         if (o == null) return false;
         try {
             String s = String.valueOf(o);
-            // 정확히 "이름 v 버전" 혹은 이름만 매칭
             return s.equalsIgnoreCase(id)
                     || s.equalsIgnoreCase(id.split(" ")[0]);
         } catch (Throwable ignored) {

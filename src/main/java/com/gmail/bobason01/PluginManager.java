@@ -20,7 +20,6 @@ public final class PluginManager extends JavaPlugin {
     private int confirmWindowMs;
     private boolean allowLoadFromFile;
 
-    // 추가된 필드들
     private AdapterRegistry adapterRegistry;
     private StateRegistry stateRegistry;
     private AsyncPool asyncPool;
@@ -35,15 +34,12 @@ public final class PluginManager extends JavaPlugin {
         saveDefaultConfig();
         reloadAll();
 
-        // 레지스트리 생성 및 WG 어댑터 등록
         adapterRegistry = new AdapterRegistry();
         adapterRegistry.register(new WorldGuardAdapterExtreme());
 
-        // 상태 / 스레드 풀 생성
         stateRegistry = new StateRegistry();
         asyncPool = new AsyncPool(Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
 
-        // SafePoint 매니저 생성
         safePoint = new SafePointManagerExtreme(
                 this, adapterRegistry, stateRegistry, asyncPool,
                 minTps, deferPlayers, confirmWindowMs,

@@ -34,7 +34,7 @@ public final class PluginUnloader {
             if (!plugin.isEnabled()) {
                 fastUnregisterPhase(plugin, identifier);
                 CommandCleaner.clearPluginCommands(plugin);
-                clearBrigadierNodes(plugin); // 추가: Brigadier 노드 정리
+                clearBrigadierNodes(plugin);
                 closeClassLoaderAndCaches(plugin);
                 ProviderStorageCleaner.clean(plugin.getName(), plugin.getDescription().getVersion());
                 if (ENABLE_DEEP_PURGE) safeDeepPurge(plugin);
@@ -46,7 +46,7 @@ public final class PluginUnloader {
             tryUnregisterServices(plugin);
             tryUnregisterHandlers(plugin);
             CommandCleaner.clearPluginCommands(plugin);
-            clearBrigadierNodes(plugin); // 추가: Brigadier 노드 정리
+            clearBrigadierNodes(plugin);
             tryDisable(plugin);
             tryScrubSchedulerPending(plugin);
             tryRemoveFromSimplePluginManager(plugin);
@@ -271,7 +271,7 @@ public final class PluginUnloader {
         tryUnregisterServices(plugin);
         tryUnregisterHandlers(plugin);
         CommandCleaner.clearPluginCommands(plugin);
-        clearBrigadierNodes(plugin); // 빠른 해제에도 포함
+        clearBrigadierNodes(plugin);
         tryRemoveFromSimplePluginManager(plugin);
         tryClearPaperProviders(identifier);
     }
@@ -323,7 +323,6 @@ public final class PluginUnloader {
     private static void log(String s) { Bukkit.getLogger().info(s); }
     private static void logErr(String s) { Bukkit.getLogger().severe(s); }
 
-    // 여기 추가: Brigadier 노드 정리
     private static void clearBrigadierNodes(Plugin plugin) {
         try {
             Object server = Bukkit.getServer();

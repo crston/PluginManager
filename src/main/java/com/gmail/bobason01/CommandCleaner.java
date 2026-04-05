@@ -28,7 +28,6 @@ public final class CommandCleaner {
             Map<String, Command> known = (Map<String, Command>) getField(commandMap, "knownCommands");
             if (known == null) return;
 
-            // 제거할 key 수집 (별칭 포함)
             Set<String> removeKeys = new HashSet<>();
 
             for (Map.Entry<String, Command> entry : known.entrySet()) {
@@ -49,12 +48,10 @@ public final class CommandCleaner {
                 }
             }
 
-            // 수집된 key 제거
             for (String key : removeKeys) {
                 known.remove(key);
             }
 
-            // Brigadier dispatcher 동기화
             syncCommandsSafe();
 
             Bukkit.getLogger().info("[CommandCleaner] Fully cleared commands for plugin " + plugin.getName());
@@ -69,7 +66,6 @@ public final class CommandCleaner {
             Method m = server.getClass().getMethod("syncCommands");
             m.invoke(server);
         } catch (NoSuchMethodException e) {
-            // Spigot 계열은 syncCommands 없음 → 무시
         } catch (Throwable t) {
             Bukkit.getLogger().warning("[CommandCleaner] syncCommands failed: " + t.getMessage());
         }

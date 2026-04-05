@@ -223,4 +223,3 @@ public final class WorldGuardAdapterExtreme implements PluginAdapter {
         }catch(Throwable t){ return null; }
     }
 }
-
